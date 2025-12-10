@@ -150,13 +150,17 @@ while ($skip -lt $total) {
   $page = Invoke-ArgPagedQuery -Query $kqlPage -First $BatchSize -Skip $skip -ScopeParams $graphScopeParams
   
   if ($page) {
-    # Search-AzGraph returns an array of objects directly
-    $pageData = @($page)  # Ensure it's an array
-    
-    Write-Verbose "Retrieved $($pageData.Count) resources in this batch"
-    foreach ($item in $pageData) {
-      $all.Add($item)
+    # PSResourceGraphResponse object implements IEnumerable and contains the results
+    # Access items directly by enumerating the response
+    $itemsInBatch = 0
+    foreach ($item in $page) {
+      if ($item) {
+        $all.Add($item)
+        $itemsInBatch++
+      }
     }
+    
+    Write-Verbose "Retrieved $itemsInBatch resources in this batch (Total so far: $($all.Count))"
   }
 
   $skip += $BatchSize
@@ -167,16 +171,36 @@ Write-Progress -Activity "Fetching resources with tag '$TagKey'" -Completed
 # Optional de-dup by resource id (paranoia only; ARG should already be unique)
 if ($all.Count -gt 0) {
   $deduped = $all | Group-Object id | ForEach-Object { $_.Group[0] }
+  
+  Write-Host "`n========================================" -ForegroundColor Cyan
+  Write-Host "RESOURCES WITH TAG: $TagKey" -ForegroundColor Cyan
+  Write-Host "========================================" -ForegroundColor Cyan
+  
+  # Display results in a formatted table
+  $deduped | Select-Object name, type, resourceGroup, location, subscriptionId, tagValue, id | Format-Table -AutoSize
+  
+  Write-Host "========================================" -ForegroundColor Cyan
+  Write-Host "Total resources found: $($deduped.Count)" -ForegroundColor Green
+  Write-Host "========================================`n" -ForegroundColor Cyan
+  
+  # Write CSV output if needed
+  if ($OutputPath) {
+    Write-Host "Writing CSV file to: $OutputPath ..." -ForegroundColor Cyan
+    $deduped |
+      Select-Object id, name, type, subscriptionId, resourceGroup, location, tagValue |
+      Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputPath
+    Write-Host "CSV file written successfully!" -ForegroundColor Green
+  }
 } else {
   Write-Warning "No resources were retrieved from Azure Resource Graph."
+  Write-Host "`nThis could happen if:" -ForegroundColor Yellow
+  Write-Host "  - The count query result was cached but resources have since been deleted" -ForegroundColor Yellow
+  Write-Host "  - There's a delay in Azure Resource Graph indexing (data can be up to 5 minutes old)" -ForegroundColor Yellow  
+  Write-Host "  - The tag exists but on resources you don't have RBAC permissions to view" -ForegroundColor Yellow
+  Write-Host "`nRecommended Actions:" -ForegroundColor Cyan
+  Write-Host "  1. Wait 5-10 minutes and retry (Resource Graph cache refresh)" -ForegroundColor Gray
+  Write-Host "  2. Verify the tag exists using Azure Portal or CLI" -ForegroundColor Gray
+  Write-Host "  3. Check permissions: Get-AzRoleAssignment -SignInName (Get-AzContext).Account.Id" -ForegroundColor Gray
+  Write-Host "`nNote: This script uses Azure Resource Graph API for optimal performance with 200K+ resources across 700+ subscriptions." -ForegroundColor Gray
   return
 }
-
-# Write CSV output
-Write-Host "Writing $($deduped.Count) rows to $OutputPath ..." -ForegroundColor Cyan
-$deduped |
-  Select-Object id, name, type, subscriptionId, resourceGroup, location, tagValue |
-  Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputPath
-
-Write-Host "Done! CSV file written to: $OutputPath" -ForegroundColor Green
-Write-Host "Total resources exported: $($deduped.Count)" -ForegroundColor Green
