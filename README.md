@@ -91,6 +91,49 @@ Replaces a specific tag name with a new tag name across Azure resources. This sc
 .\TagFix.ps1 -TagToReplace "Dept" -TagNewName "Department" -WhatIf
 ```
 
+### TagRollback.ps1
+**Azure Resource Tag Rollback and Recovery Tool**
+
+Restores Azure resource tags from backup CSV files created by TagFix.ps1. Provides safe rollback with validation, filtering options, and WhatIf mode for testing.
+
+#### Key Features:
+- ✅ Automatic backup file validation
+- ✅ Full or selective rollback (by resource group or name)
+- ✅ WhatIf mode for safe testing before execution
+- ✅ Resource existence verification
+- ✅ Real-time verification after rollback
+- ✅ Detailed rollback summary and statistics
+- ✅ Skip confirmation with -Force parameter
+- ✅ Handles deleted resources gracefully
+
+#### Parameters:
+- **BackupFile**: Path to backup CSV created by TagFix.ps1 (Required)
+- **ResourceGroupName**: Rollback only specific resource group (Optional)
+- **ResourceName**: Rollback only specific resource by name (Optional)
+- **Force**: Skip confirmation prompts (Optional)
+- **WhatIf**: Preview changes without applying them (Optional)
+
+#### Examples:
+```powershell
+# Full rollback - restores all resources from backup
+.\TagRollback.ps1 -BackupFile ".\TagReplacement_Environment_to_Env_20251210_143052.csv"
+
+# Test mode - see what would happen without making changes
+.\TagRollback.ps1 -BackupFile ".\backup.csv" -WhatIf
+
+# Rollback only specific resource group
+.\TagRollback.ps1 -BackupFile ".\backup.csv" -ResourceGroupName "rg-production"
+
+# Rollback single resource
+.\TagRollback.ps1 -BackupFile ".\backup.csv" -ResourceName "vm-prod-01"
+
+# Silent mode - skip confirmations
+.\TagRollback.ps1 -BackupFile ".\backup.csv" -Force
+
+# Rollback specific RG with WhatIf
+.\TagRollback.ps1 -BackupFile ".\backup.csv" -ResourceGroupName "rg-test" -WhatIf
+```
+
 ## 🛠️ Setup
 
 ### Prerequisites
@@ -299,77 +342,104 @@ Timestamp,Name,ResourceGroupName,ResourceId,ResourceType,Location,OldTagName,New
 - Tag values were not preserved correctly
 - Business requirement changed during execution
 
-### Method 1: Manual Rollback Using Azure Portal
+### Using TagRollback.ps1 (Recommended Method)
+
+The **TagRollback.ps1** script provides a safe, automated way to restore tags from backup files.
+
+#### Quick Start - Full Rollback:
+```powershell
+# 1. Test first with WhatIf
+.\TagRollback.ps1 -BackupFile ".\TagReplacement_Environment_to_Env_20251210_143052.csv" -WhatIf
+
+# 2. Execute the rollback
+.\TagRollback.ps1 -BackupFile ".\TagReplacement_Environment_to_Env_20251210_143052.csv"
+```
+
+#### Selective Rollback Examples:
+
+**Rollback specific resource group:**
+```powershell
+# Test first
+.\TagRollback.ps1 -BackupFile ".\backup.csv" `
+                  -ResourceGroupName "rg-production" `
+                  -WhatIf
+
+# Execute
+.\TagRollback.ps1 -BackupFile ".\backup.csv" `
+                  -ResourceGroupName "rg-production"
+```
+
+**Rollback single resource:**
+```powershell
+.\TagRollback.ps1 -BackupFile ".\backup.csv" `
+                  -ResourceName "vm-prod-01"
+```
+
+**Silent rollback (no confirmations):**
+```powershell
+.\TagRollback.ps1 -BackupFile ".\backup.csv" -Force
+```
+
+#### Understanding TagRollback.ps1 Output:
+
+The script provides:
+- **Pre-validation**: Checks backup file format and Azure connection
+- **Resource preview**: Shows all resources that will be affected
+- **Real-time progress**: Updates as each resource is processed
+- **Verification**: Confirms tags were restored correctly
+- **Summary report**: Shows success/failure/skipped counts
+
+**Example output:**
+```
+========================================
+Azure Resource Tag Rollback Tool
+========================================
+
+[2025-12-10 14:30:52] [i] Checking Azure connection...
+[2025-12-10 14:30:53] [✓] Connected to Azure as: user@contoso.com
+[2025-12-10 14:30:53] [→] Importing backup file: .\backup.csv
+[2025-12-10 14:30:54] [✓] Successfully imported 15 records from backup
+[2025-12-10 14:30:54] [i] Backup Details:
+[2025-12-10 14:30:54] [i]   Old Tag Name: Environment
+[2025-12-10 14:30:54] [i]   New Tag Name: Env
+
+Resources to Rollback:
+Name         ResourceGroupName  ResourceType                        Old Tag      New Tag  Value
+----         -----------------  ------------                        -------      -------  -----
+vm-prod-01   rg-production      Microsoft.Compute/virtualMachines   Environment  Env      Production
+
+[2025-12-10 14:30:55] [→] Processing: vm-prod-01
+[2025-12-10 14:30:55] [i]   → Remove tag: Env
+[2025-12-10 14:30:55] [i]   → Restore tag: Environment = Production
+[2025-12-10 14:30:56] [✓] ✓ Successfully rolled back: vm-prod-01
+
+========================================
+ROLLBACK SUMMARY
+========================================
+Successfully Rolled Back: 15
+Failed:                   0
+Skipped:                  0
+========================================
+```
+
+### Alternative Method 1: Manual Rollback Using Azure Portal
 1. Open the backup CSV file
 2. Filter for affected resources
 3. Manually revert tags in Azure Portal using the backup data
 
-### Method 2: Automated Rollback with PowerShell Script
-
-Create a rollback script using the backup file:
+### Alternative Method 2: Custom PowerShell Script
+For advanced scenarios, you can create a custom script:
 
 ```powershell
-# Rollback script - Save as TagFix-Rollback.ps1
-param(
-    [Parameter(Mandatory=$true)]
-    [string]$BackupFile
-)
-
-# Import backup data
-$backupData = Import-Csv -Path $BackupFile
-
-Write-Host "Found $($backupData.Count) resources in backup file" -ForegroundColor Cyan
-
-foreach ($item in $backupData) {
-    try {
-        Write-Host "Rolling back: $($item.Name)" -ForegroundColor Yellow
-        
-        # Get current resource
-        $resource = Get-AzResource -ResourceId $item.ResourceId -ErrorAction Stop
-        
-        # Clone current tags
-        $tags = @{}
-        if ($resource.Tags) {
-            foreach ($key in $resource.Tags.Keys) {
-                $tags[$key] = $resource.Tags[$key]
-            }
-        }
-        
-        # Remove new tag if present
-        if ($tags.ContainsKey($item.NewTagName)) {
-            $tags.Remove($item.NewTagName)
-            Write-Host "  Removed tag: $($item.NewTagName)" -ForegroundColor Gray
-        }
-        
-        # Restore old tag
-        $tags[$item.OldTagName] = $item.TagValue
-        Write-Host "  Restored tag: $($item.OldTagName) = $($item.TagValue)" -ForegroundColor Gray
-        
-        # Apply tags
-        Update-AzTag -ResourceId $item.ResourceId -Tag $tags -Operation Replace -ErrorAction Stop
-        Write-Host "  ✓ Successfully rolled back: $($item.Name)" -ForegroundColor Green
-    }
-    catch {
-        Write-Host "  ✗ Failed to rollback: $($item.Name) - $($_.Exception.Message)" -ForegroundColor Red
-    }
-}
-
-Write-Host "`nRollback operation completed!" -ForegroundColor Cyan
-```
-
-**To execute rollback:**
-```powershell
-.\TagFix-Rollback.ps1 -BackupFile ".\TagReplacement_Environment_to_Env_20251210_143052.csv"
-```
-
-### Method 3: Selective Rollback
-```powershell
-# Rollback only specific resources
+# Custom selective rollback
 $backupFile = ".\TagReplacement_Environment_to_Env_20251210_143052.csv"
 $backup = Import-Csv -Path $backupFile
 
-# Filter for specific resource group or name pattern
-$resourcestoRollback = $backup | Where-Object { $_.ResourceGroupName -eq "rg-production" }
+# Filter for specific criteria
+$resourcestoRollback = $backup | Where-Object { 
+    $_.ResourceGroupName -eq "rg-production" -and 
+    $_.Location -eq "eastus" 
+}
 
 foreach ($item in $resourcestoRollback) {
     $resource = Get-AzResource -ResourceId $item.ResourceId
@@ -381,10 +451,11 @@ foreach ($item in $resourcestoRollback) {
 ```
 
 ### Best Practices for Rollback:
-1. **Keep backup files for at least 30 days** after tag changes
-2. **Test rollback script** in non-production environment first
-3. **Document the rollback** in your change management system
-4. **Verify data integrity** after rollback using TagWorkShop.ps1
+1. **Always use WhatIf first** - Test with TagRollback.ps1 -WhatIf before actual rollback
+2. **Keep backup files for at least 30 days** after tag changes
+3. **Test rollback in non-production** environment first if possible
+4. **Document the rollback** in your change management system
+5. **Verify data integrity** after rollback using TagWorkShop.ps1
 5. **Coordinate with team** before executing rollback on production resources
 
 ## 📊 Use Cases
@@ -608,14 +679,60 @@ foreach ($item in $backup) {
 }
 ```
 
+### TagRollback.ps1 Specific Issues
+
+#### "Backup file missing required column" Error
+```powershell
+# Verify backup file has correct format
+$headers = (Get-Content "your-backup.csv" -First 1) -split ','
+Write-Host "Columns found: $($headers -join ', ')"
+
+# Required columns: Name, ResourceId, OldTagName, NewTagName, TagValue
+# If missing, the backup file may be corrupted or from a different script version
+```
+
+#### "Resource no longer exists" Warnings
+```powershell
+# This is normal if resources were deleted after backup was created
+# The rollback script will skip these automatically
+
+# To see which resources exist:
+.\TagRollback.ps1 -BackupFile "backup.csv" -WhatIf
+```
+
+#### Rollback Doesn't Restore Values
+```powershell
+# Verify the backup file contains the correct values
+Import-Csv "backup.csv" | Select-Object Name, OldTagName, NewTagName, TagValue | Format-Table
+
+# Check if tags were modified after the backup
+Get-AzResource -Name "resource-name" | Select-Object -ExpandProperty Tags
+```
+
+#### "Resource already appears to be rolled back" Warning
+```powershell
+# The resource already has the old tag and doesn't have the new tag
+# This means it's already in the correct state
+
+# To force reprocessing, manually remove the old tag first:
+$resource = Get-AzResource -Name "resource-name"
+$tags = $resource.Tags
+$tags.Remove("OldTagName")
+Update-AzTag -ResourceId $resource.ResourceId -Tag $tags -Operation Replace
+
+# Then run rollback again
+.\TagRollback.ps1 -BackupFile "backup.csv"
+```
+
 ## 📝 Version History
 
 - **v2.0** (December 10, 2025)
-  - Enhanced error handling
-  - Dynamic class creation for flexible schema
-  - Improved pagination support
+  - **TagWorkShop.ps1**: Enhanced error handling, dynamic class creation, improved pagination
+  - **TagFix.ps1**: Added comprehensive backup and verification features
+  - **TagRollback.ps1**: NEW - Automated rollback tool with WhatIf support
   - Added system tag filtering
-  - Performance optimizations
+  - Performance optimizations across all scripts
+  - Comprehensive documentation with testing and troubleshooting guides
 
 ## 👥 Contributing
 
