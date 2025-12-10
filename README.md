@@ -257,7 +257,7 @@ For issues or questions, please open an issue in the GitHub repository.
 
 ---
 
-**Author**: Guil Lima - Microsoft Canada - CSA
+**Author**: Guil Lima - Microsoft Canada - CSA  
 **Contact**: guillima@microsoft.com  
 **Repository**: https://github.com/gplima89/AzureTagManagementAndFix  
 **Last Updated**: December 10, 2025
